@@ -22,6 +22,7 @@ import {
   updateEmployee,
 } from "../../../redux/Employee/index.slice";
 import type { Employee } from "../../../types/employee";
+import { exportRowsToCsv } from "../../../utils/csvExport";
 
 const gridTemplate =
   "180px 250px 180px 220px 140px 140px 140px 180px 180px";
@@ -42,6 +43,7 @@ const FILTERABLE_COLUMN_IDS = new Set([
   "joinDate",
 ]);
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
+const ACTION_COLUMN_ID = "actions";
 
 const getVisiblePageNumbers = (
   currentPageIndex: number,
@@ -82,6 +84,12 @@ const SortIcon = ({ active, direction }: { active: boolean; direction: "up" | "d
     )}
   </svg>
 );
+
+const formatDateForCsv = (value: unknown) => {
+  const date = new Date(String(value));
+
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+};
 
 const EmployeeTable = () => {
   const dispatch = useDispatch();
@@ -226,6 +234,22 @@ const EmployeeTable = () => {
     getPaginationRowModel: getPaginationRowModel(),
     autoResetPageIndex: false,
   });
+
+  const handleExportCsv = useCallback(() => {
+    const exportRows = table.getSortedRowModel().rows;
+    const exportColumns = table
+      .getVisibleLeafColumns()
+      .filter((column) => column.id !== ACTION_COLUMN_ID);
+
+    exportRowsToCsv<Employee>({
+      columns: exportColumns,
+      filename: "employees-export.csv",
+      rows: exportRows,
+      formatters: {
+        joinDate: ({ value }) => formatDateForCsv(value),
+      },
+    });
+  }, [table]);
 
   const updateSalaryFilter = (
     column: Column<Employee, unknown>,
@@ -376,6 +400,25 @@ const EmployeeTable = () => {
   return (
     <div className="p-5">
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3">
+          <div>
+            <h1 className="text-base font-semibold text-gray-900">
+              Employee Directory
+            </h1>
+            <p className="text-sm text-gray-500">
+              {filteredRowCount} records available for export
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="cursor-pointer rounded-md bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800"
+          >
+            Export CSV
+          </button>
+        </div>
+
         {/* Header */}
         <div
           style={{
