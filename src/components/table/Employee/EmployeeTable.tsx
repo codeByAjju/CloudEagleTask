@@ -3,11 +3,13 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import type {
   ColumnFiltersState,
+  PaginationState,
   SortingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -15,7 +17,10 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { columns } from "./columns";
-import { getEmployees, setEmployees } from "../../../redux/Employee/index.slice";
+import {
+  getEmployees,
+  updateEmployee,
+} from "../../../redux/Employee/index.slice";
 import type { Employee } from "../../../types/employee";
 
 const gridTemplate =
@@ -36,6 +41,21 @@ const FILTERABLE_COLUMN_IDS = new Set([
   "status",
   "joinDate",
 ]);
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
+
+const getVisiblePageNumbers = (
+  currentPageIndex: number,
+  pageCount: number
+) => {
+  const currentPage = currentPageIndex + 1;
+  const start = Math.max(1, currentPage - 2);
+  const end = Math.min(pageCount, currentPage + 2);
+
+  return Array.from(
+    { length: end - start + 1 },
+    (_, index) => start + index
+  );
+};
 
 const FilterIcon = ({ active }: { active: boolean }) => (
   <svg
@@ -68,6 +88,10 @@ const EmployeeTable = () => {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] =
     useState<ColumnFiltersState>([]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 25,
+  });
   const [openFilterColumnId, setOpenFilterColumnId] =
     useState<string | null>(null);
   const [editingRowId, setEditingRowId] =
@@ -124,13 +148,10 @@ const EmployeeTable = () => {
       setSavedHistory((prev) => ({ ...prev, [id]: prevEmployee }));
     }
 
-    const updatedEmployees = employees.map((employee) =>
-      employee.id === id
-        ? ({ ...employee, ...editedDataRef.current } as Employee)
-        : employee
-    );
-
-    dispatch(setEmployees(updatedEmployees));
+    dispatch(updateEmployee({
+      id,
+      updatedData: editedDataRef.current,
+    }));
 
     setEditingRowId(null);
     setEditingField(null);
@@ -151,18 +172,17 @@ const EmployeeTable = () => {
 
     if (!lastSaved) return;
 
-    const updatedEmployees = employees.map((employee) =>
-      employee.id === id ? lastSaved : employee
-    );
-
-    dispatch(setEmployees(updatedEmployees));
+    dispatch(updateEmployee({
+      id,
+      updatedData: lastSaved,
+    }));
 
     setSavedHistory((prev) => {
       const copy = { ...prev };
       delete copy[id];
       return copy;
     });
-  }, [dispatch, employees, savedHistory]);
+  }, [dispatch, savedHistory]);
 
   const memoizedColumns = useMemo(
     () =>
@@ -193,14 +213,18 @@ const EmployeeTable = () => {
     state: {
       sorting,
       columnFilters,
+      pagination,
     },
 
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onPaginationChange: setPagination,
 
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    autoResetPageIndex: false,
   });
 
   const updateSalaryFilter = (
@@ -322,6 +346,23 @@ const EmployeeTable = () => {
   };
 
   const rows = table.getRowModel().rows;
+  const filteredRowCount = table.getFilteredRowModel().rows.length;
+  const totalRowCount = table.getCoreRowModel().rows.length;
+  const pageCount = table.getPageCount();
+  const pageNumbers = getVisiblePageNumbers(
+    table.getState().pagination.pageIndex,
+    pageCount
+  );
+  const pageStart =
+    filteredRowCount === 0
+      ? 0
+      : table.getState().pagination.pageIndex *
+        table.getState().pagination.pageSize +
+        1;
+  const pageEnd = Math.min(
+    pageStart + rows.length - 1,
+    filteredRowCount
+  );
 
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -470,6 +511,74 @@ const EmployeeTable = () => {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+          <div className="flex items-center gap-3">
+            <span>
+              Showing {pageStart}-{pageEnd} of {filteredRowCount}
+              {filteredRowCount !== totalRowCount
+                ? ` filtered from ${totalRowCount}`
+                : ""}{" "}
+              records
+            </span>
+
+            <label className="flex items-center gap-2">
+              <span>Rows per page</span>
+              <select
+                value={table.getState().pagination.pageSize}
+                onChange={(event) => {
+                  table.setPageSize(Number(event.target.value));
+                }}
+                className="cursor-pointer rounded-md border border-gray-300 px-2 py-1 outline-none focus:border-black"
+              >
+                {PAGE_SIZE_OPTIONS.map((pageSize) => (
+                  <option key={pageSize} value={pageSize}>
+                    {pageSize}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="cursor-pointer rounded-md border border-gray-300 px-3 py-1 font-medium transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Previous
+            </button>
+
+            {pageNumbers.map((pageNumber) => {
+              const active =
+                pageNumber === table.getState().pagination.pageIndex + 1;
+
+              return (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  onClick={() => table.setPageIndex(pageNumber - 1)}
+                  className={`h-8 min-w-8 cursor-pointer rounded-md border px-2 font-medium transition ${active
+                    ? "border-black bg-black text-white"
+                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                >
+                  {pageNumber}
+                </button>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="cursor-pointer rounded-md border border-gray-300 px-3 py-1 font-medium transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next
+            </button>
           </div>
         </div>
       </div>
