@@ -66,6 +66,8 @@ The project focuses on:
 ---
 
 # Installation & Setup
+# Clone Project
+git clone <repository-url>
 
 ## Install Dependencies
 
