@@ -1,6 +1,8 @@
 import {
   type Column,
+  type FilterFn,
   flexRender,
+  functionalUpdate,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
@@ -9,6 +11,7 @@ import {
 } from "@tanstack/react-table";
 import type {
   ColumnFiltersState,
+  OnChangeFn,
   PaginationState,
   SortingState,
 } from "@tanstack/react-table";
@@ -111,6 +114,22 @@ const ExportIcon = () => (
   </svg>
 );
 
+const SearchIcon = () => (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 24 24"
+    className="h-4 w-4"
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <circle cx="11" cy="11" r="8" />
+    <path d="m21 21-4.35-4.35" />
+  </svg>
+);
+
 const formatDateForCsv = (value: unknown) => {
   const date = new Date(String(value));
 
@@ -136,9 +155,35 @@ const hasEmployeeChanges = (
   );
 };
 
+const globalSearchFields: Array<keyof Employee> = [
+  "employeeName",
+  "email",
+  "department",
+  "role",
+  "salary",
+  "licensesUsed",
+  "status",
+  "joinDate",
+];
+
+const employeeGlobalFilter: FilterFn<Employee> = (
+  row,
+  _columnId,
+  filterValue
+) => {
+  const searchValue = String(filterValue ?? "").trim().toLowerCase();
+
+  if (!searchValue) return true;
+
+  return globalSearchFields.some((field) =>
+    String(row.original[field]).toLowerCase().includes(searchValue)
+  );
+};
+
 const EmployeeTable = () => {
   const dispatch = useDispatch();
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] =
     useState<ColumnFiltersState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -165,6 +210,7 @@ const EmployeeTable = () => {
   const [savedHistory, setSavedHistory] =
     useState<Record<number, Employee>>({});
   const employees = useSelector(getEmployees);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -297,6 +343,27 @@ const EmployeeTable = () => {
     });
   }, [dispatch, savedHistory]);
 
+  const resetPaginationForFiltering = useCallback(() => {
+    setPagination((current) =>
+      current.pageIndex === 0
+        ? current
+        : { ...current, pageIndex: 0 }
+    );
+    parentRef.current?.scrollTo({ top: 0 });
+  }, []);
+
+  const handleColumnFiltersChange =
+    useCallback<OnChangeFn<ColumnFiltersState>>((updater) => {
+      setColumnFilters((current) => functionalUpdate(updater, current));
+      resetPaginationForFiltering();
+    }, [resetPaginationForFiltering]);
+
+  const handleGlobalFilterChange =
+    useCallback<OnChangeFn<string>>((updater) => {
+      setGlobalFilter((current) => functionalUpdate(updater, current));
+      resetPaginationForFiltering();
+    }, [resetPaginationForFiltering]);
+
   const memoizedColumns = useMemo(
     () =>
       columns(
@@ -325,18 +392,21 @@ const EmployeeTable = () => {
     columns: memoizedColumns,
     state: {
       sorting,
+      globalFilter,
       columnFilters,
       pagination,
     },
 
     onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: handleGlobalFilterChange,
+    onColumnFiltersChange: handleColumnFiltersChange,
     onPaginationChange: setPagination,
 
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    globalFilterFn: employeeGlobalFilter,
     autoResetPageIndex: false,
   });
 
@@ -494,8 +564,6 @@ const EmployeeTable = () => {
     filteredRowCount
   );
 
-  const parentRef = useRef<HTMLDivElement>(null);
-
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -545,15 +613,32 @@ const EmployeeTable = () => {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              disabled={filteredRowCount === 0 || isInitialLoading}
-              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              <ExportIcon />
-              Export CSV
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="relative block">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                  <SearchIcon />
+                </span>
+                <input
+                  type="search"
+                  value={globalFilter}
+                  onChange={(event) =>
+                    table.setGlobalFilter(event.target.value)
+                  }
+                  placeholder="Search employees..."
+                  className="h-10 w-64 rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={filteredRowCount === 0 || isInitialLoading}
+                className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                <ExportIcon />
+                Export CSV
+              </button>
+            </div>
           </div>
 
           <div
@@ -582,27 +667,36 @@ const EmployeeTable = () => {
                     return (
                       <div
                         key={header.id}
-                        className="relative flex min-w-0 items-center gap-2 bg-slate-50 px-4 py-4 text-xs font-semibold uppercase text-slate-600 transition hover:bg-slate-100"
+                        className="relative flex min-w-0 items-center gap-2 bg-slate-50 px-4 py-4 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
                       >
-                        <button
-                          type="button"
-                          onClick={header.column.getToggleSortingHandler()}
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-                        >
-                          <span className="truncate">
+                        {header.column.getCanSort() ? (
+                          <button
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                          >
+                            <span className="truncate">
+                              {flexRender(
+                                header.column.columnDef.header,
+                                header.getContext()
+                              )}
+                            </span>
+
+                            <span className="flex flex-col leading-none">
+                              <SortIcon active={sorted === "asc"} direction="up" />
+                              <span className="mt-0.5">
+                                <SortIcon active={sorted === "desc"} direction="down" />
+                              </span>
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate">
                             {flexRender(
                               header.column.columnDef.header,
                               header.getContext()
                             )}
                           </span>
-
-                          <span className="flex flex-col leading-none">
-                            <SortIcon active={sorted === "asc"} direction="up" />
-                            <span className="mt-0.5">
-                              <SortIcon active={sorted === "desc"} direction="down" />
-                            </span>
-                          </span>
-                        </button>
+                        )}
 
                         {hasFilter && (
                           <>
